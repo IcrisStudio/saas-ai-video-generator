@@ -1,0 +1,126 @@
+{
+  "veo": {
+    "models": [
+      "veo-3.1",
+      "veo-3.1-fast",
+      "veo-2"
+    ],
+    "resolutions": [
+      "720p",
+      "1080p"
+    ],
+    "durations": [
+      8
+    ],
+    "aspect_ratios": [
+      "16:9",
+      "9:16"
+    ],
+    "supports_image_input": true
+  },
+  "sora": {
+    "models": [
+      "sora-2",
+      "sora-2-pro",
+      "sora-2-pro-hd"
+    ],
+    "resolutions": {
+      "sora-2": [
+        "small"
+      ],
+      "sora-2-pro": [
+        "small"
+      ],
+      "sora-2-pro-hd": [
+        "large"
+      ]
+    },
+    "durations": {
+      "sora-2": [
+        10,
+        15
+      ],
+      "sora-2-pro": [
+        25
+      ],
+      "sora-2-pro-hd": [
+        15
+      ]
+    },
+    "aspect_ratios": [
+      "landscape",
+      "portrait"
+    ],
+    "supports_image_input": true
+  },
+  "grok": {
+    "models": [
+      "grok-3"
+    ],
+    "resolutions": [
+      "480p",
+      "720p"
+    ],
+    "durations": [
+      6,
+      10,
+      15
+    ],
+    "aspect_ratios": [
+      "landscape",
+      "portrait",
+      "square",
+      "vertical",
+      "horizontal"
+    ],
+    "modes": [
+      "custom",
+      "normal",
+      "extremely-crazy",
+      "extremely-spicy-or-crazy"
+    ],
+    "supports_image_input": true
+  },
+  "image": {
+    "models": [
+      "nano-banana-pro"
+    ],
+    "aspect_ratios": [
+      "1:1",
+      "16:9",
+      "9:16",
+      "4:3",
+      "3:4"
+    ],
+    "resolutions": [
+      "1K",
+      "2K",
+      "4K"
+    ],
+    "output_formats": [
+      "jpeg",
+      "png"
+    ],
+    "styles": [
+      "None",
+      "3D Render",
+      "Acrylic",
+      "Anime General",
+      "Creative",
+      "Dynamic",
+      "Fashion",
+      "Game Concept",
+      "Graphic Design 3D",
+      "Illustration",
+      "Photorealistic",
+      "Portrait",
+      "Portrait Cinematic",
+      "Portrait Fashion",
+      "Ray Traced",
+      "Stock Photo",
+      "Watercolor"
+    ],
+    "rate_limit": "5rq/min, 100rq/hour, 1000rq/day",
+    "cost": 5
+  }
+}

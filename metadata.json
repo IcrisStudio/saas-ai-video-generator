@@ -1,0 +1,5 @@
+{
+  "name": "Nexus Mind - Node-Based AI Canvas",
+  "description": "A node-based image generation and editing workspace using Gemini AI. Connect media, text, and imagination nodes to craft and iterate on visual ideas.",
+  "requestFramePermissions": []
+}

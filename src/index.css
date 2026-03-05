@@ -1,0 +1,72 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+@import "reactflow/dist/style.css";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-100 font-sans antialiased overflow-hidden;
+}
+
+.react-flow__node {
+  @apply !rounded-xl !border-0 !shadow-2xl !bg-transparent;
+}
+
+.react-flow__handle {
+  @apply w-3 h-3 bg-zinc-400 border-2 border-zinc-900 transition-colors hover:bg-emerald-400;
+}
+
+.react-flow__edge-path {
+  @apply stroke-zinc-700 stroke-2;
+}
+
+.react-flow__controls {
+  @apply bg-zinc-900 border-zinc-800 rounded-lg overflow-hidden;
+}
+
+.react-flow__controls-button {
+  @apply border-zinc-800 fill-zinc-400 hover:bg-zinc-800;
+}
+
+/* Custom Scrollbar Styles */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #050508;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  border: 3px solid #050508;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) #050508;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #050508;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(to bottom, #8b5cf6, #10b981);
+  border-radius: 20px;
+  border: 2px solid #050508;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(to bottom, #7c3aed, #059669);
+}
