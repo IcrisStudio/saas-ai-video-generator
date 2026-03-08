@@ -29,33 +29,23 @@ export interface GeminigenTextParams {
 }
 
 async function handleResponse(response: Response) {
-  const text = await response.text();
-  let data: any;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    if (!response.ok) {
-      throw new Error("Server error – please try again. If it persists, check your connection and that the app is deployed with the correct API keys.");
-    }
-    throw new Error("Invalid response from server");
-  }
+  const data = await response.json();
   if (!response.ok) {
-    const msg = (data as any).error_message ?? (data as any).message ?? (data as any).error ?? "Geminigen API Error";
-    throw new Error(typeof msg === "string" ? msg : "Generation failed");
+    const msg = (data as any).error_message || (data as any).message || "Geminigen API Error";
+    throw new Error(msg);
   }
   return data as any;
 }
 
 
 
-// Single Geminigen API route (Vercel Hobby 12-function limit). Target via header.
-const GEMINIGEN_API = "/api/geminigen";
-
-function getVideoTarget(model: string, isExtension: boolean = false): string {
-  const type = isExtension ? "video-extend" : "video-gen";
-  if (model.startsWith("sora")) return `${type}/sora`;
-  if (model.startsWith("grok")) return `${type}/grok`;
-  return `${type}/veo`;
+// Determine which video endpoint to call based on model name
+function getVideoEndpoint(model: string, isExtension: boolean = false): string {
+  const type = isExtension ? 'video-extend' : 'video-gen';
+  if (model.startsWith('sora')) return `/api/geminigen/${type}/sora`;
+  if (model.startsWith('grok')) return `/api/geminigen/${type}/grok`;
+  // veo is the default
+  return `/api/geminigen/${type}/veo`;
 }
 
 export async function generateGeminigenImage(params: GeminigenImageParams): Promise<{ url: string; downloadUrl?: string; uuid?: string }> {
@@ -81,9 +71,8 @@ export async function generateGeminigenImage(params: GeminigenImageParams): Prom
     }
   }
 
-  const response = await fetch(GEMINIGEN_API, {
+  const response = await fetch("/api/geminigen/image", {
     method: "POST",
-    headers: { "X-Geminigen-Target": "image" },
     body: formData,
   });
   const data = await handleResponse(response);
@@ -119,10 +108,9 @@ export async function generateGeminigenVideo(params: GeminigenVideoParams): Prom
     }
   }
 
-  const target = getVideoTarget(params.model, !!params.ref_history);
-  const response = await fetch(GEMINIGEN_API, {
+  const endpoint = getVideoEndpoint(params.model, !!params.ref_history);
+  const response = await fetch(endpoint, {
     method: "POST",
-    headers: { "X-Geminigen-Target": target },
     body: formData,
   });
   const data = await handleResponse(response);
@@ -138,9 +126,8 @@ export async function generateGeminigenText(params: GeminigenTextParams): Promis
   if (params.system_instruction) formData.append('system_instruction', params.system_instruction);
   if (params.temperature) formData.append('temperature', params.temperature.toString());
 
-  const response = await fetch(GEMINIGEN_API, {
+  const response = await fetch("/api/geminigen/text", {
     method: "POST",
-    headers: { "X-Geminigen-Target": "text" },
     body: formData,
   });
   const data = await handleResponse(response);
@@ -150,16 +137,13 @@ export async function generateGeminigenText(params: GeminigenTextParams): Promis
 }
 
 export async function generateGeminigenTTS(params: { model: string; voice: string; text: string }): Promise<{ url: string; downloadUrl?: string; uuid?: string }> {
-  const response = await fetch(GEMINIGEN_API, {
+  const response = await fetch("/api/geminigen/tts", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Geminigen-Target": "tts",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model_name: params.model,
       voices: [params.voice],
-      input_text: params.text,
+      input_text: params.text
     }),
   });
   const data = await handleResponse(response);
@@ -336,7 +320,7 @@ async function pollGeminigenStatus(uuid: string, pollIntervalMs: number = 10000)
   while (true) {
     await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
 
-    const response = await fetch(`${GEMINIGEN_API}?target=status&uuid=${encodeURIComponent(uuid)}`);
+    const response = await fetch(`/api/geminigen/status/${uuid}`);
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
