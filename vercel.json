@@ -1,5 +1,14 @@
 {
   "rewrites": [
+    { "source": "/api/geminigen/image", "destination": "/api/geminigen?__target=image" },
+    { "source": "/api/geminigen/text", "destination": "/api/geminigen?__target=text" },
+    { "source": "/api/geminigen/tts", "destination": "/api/geminigen?__target=tts" },
+    { "source": "/api/geminigen/status/:uuid", "destination": "/api/geminigen?__target=status&uuid=:uuid" },
+    { "source": "/api/geminigen/video-gen/veo", "destination": "/api/geminigen?__target=video-gen/veo" },
+    { "source": "/api/geminigen/video-gen/sora", "destination": "/api/geminigen?__target=video-gen/sora" },
+    { "source": "/api/geminigen/video-gen/grok", "destination": "/api/geminigen?__target=video-gen/grok" },
+    { "source": "/api/geminigen/video-extend/veo", "destination": "/api/geminigen?__target=video-extend/veo" },
+    { "source": "/api/geminigen/video-extend/grok", "destination": "/api/geminigen?__target=video-extend/grok" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

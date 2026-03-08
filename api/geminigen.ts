@@ -41,10 +41,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const method = req.method || "";
     const targetHeader = (req.headers["x-geminigen-target"] as string)?.trim();
     const targetQuery = (req.query.target as string)?.trim();
+    const targetRewrite = (req.query.__target as string)?.trim(); // from vercel.json rewrites (old URLs)
+    const target = targetHeader || targetQuery || targetRewrite;
     const uuidQuery = (req.query.uuid as string)?.trim();
 
-    // GET /api/geminigen?target=status&uuid=xxx
-    if (method === "GET" && (targetQuery === "status" || targetHeader === "status")) {
+    // GET /api/geminigen?target=status&uuid=xxx or rewritten from /api/geminigen/status/:uuid
+    if (method === "GET" && (target === "status" || targetQuery === "status" || targetHeader === "status")) {
       const uuid = uuidQuery || (req.headers["x-geminigen-uuid"] as string)?.trim();
       if (!uuid) return res.status(400).json({ error: "uuid required for status" });
       const apiKey = process.env.GEMINIGEN_API_KEY;
@@ -61,8 +63,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.setHeader("Allow", "GET, POST");
       return res.status(405).json({ error: "Method Not Allowed" });
     }
-
-    const target = targetHeader || targetQuery;
 
     // POST with X-Geminigen-Target: tts — JSON body
     if (target === "tts") {
