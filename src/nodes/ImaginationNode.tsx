@@ -182,6 +182,22 @@ export const ImaginationNode = ({ id, data }: { id: string; data: AppNodeData })
           </div>
         </div>
 
+        {/* Quantity (number of generations, max 4) */}
+        <div>
+          <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1.5 block">
+            Number of images
+          </label>
+          <select
+            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-300 focus:outline-none focus:border-emerald-500/50 transition-colors"
+            value={Math.min(4, Math.max(1, Number(params.quantity) || 1))}
+            onChange={(e) => updateParams({ quantity: Number(e.target.value) })}
+          >
+            {[1, 2, 3, 4].map((n) => (
+              <option key={n} value={n}>{n} image{n > 1 ? 's' : ''} ({(currentModel.cost * n)} credits)</option>
+            ))}
+          </select>
+        </div>
+
         {/* Generate Button */}
         <button
           onClick={() => data.onGenerate?.(id)}
@@ -193,7 +209,7 @@ export const ImaginationNode = ({ id, data }: { id: string; data: AppNodeData })
           ) : (
             <Wand2 size={16} />
           )}
-          Generate ({currentModel.cost} Credits)
+          Generate ({(currentModel.cost * (Math.min(4, Math.max(1, Number(params.quantity) || 1))))} Credits)
         </button>
       </div>
 

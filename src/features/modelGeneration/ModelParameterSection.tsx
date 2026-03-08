@@ -49,6 +49,30 @@ const parameterOptions = {
     { value: 'illustrated', label: 'Illustrated' },
     { value: 'anime', label: 'Anime' },
   ],
+  lighting: [
+    { value: 'soft-studio', label: 'Soft studio' },
+    { value: 'dramatic', label: 'Dramatic shadows' },
+    { value: 'golden-hour', label: 'Golden hour' },
+    { value: 'neon', label: 'Neon / artificial' },
+    { value: 'natural', label: 'Natural daylight' },
+    { value: 'low-key', label: 'Low key' },
+  ],
+  environment: [
+    { value: 'studio', label: 'Studio' },
+    { value: 'urban', label: 'Urban' },
+    { value: 'nature', label: 'Nature' },
+    { value: 'indoor', label: 'Indoor' },
+    { value: 'abstract', label: 'Abstract' },
+    { value: 'luxury', label: 'Luxury' },
+  ],
+  cameraStyle: [
+    { value: 'portrait-85mm', label: '85mm portrait' },
+    { value: 'shallow-dof', label: 'Shallow DOF' },
+    { value: 'macro', label: 'Macro' },
+    { value: 'wide', label: 'Wide shot' },
+    { value: 'commercial', label: 'Product commercial' },
+    { value: 'cinematic', label: 'Cinematic' },
+  ],
 };
 
 export const ModelParameterSection: React.FC<ModelParameterSectionProps> = ({
@@ -91,6 +115,9 @@ export const ModelParameterSection: React.FC<ModelParameterSectionProps> = ({
         {renderParameterGroup('pose', 'Pose')}
         {renderParameterGroup('expression', 'Expression')}
         {renderParameterGroup('style', 'Style')}
+        {renderParameterGroup('lighting', 'Lighting')}
+        {renderParameterGroup('environment', 'Environment')}
+        {renderParameterGroup('cameraStyle', 'Camera')}
       </div>
     </div>
   );

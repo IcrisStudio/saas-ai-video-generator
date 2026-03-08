@@ -13,30 +13,34 @@ import ReactFlow, {
 } from 'reactflow';
 import * as htmlToImage from 'html-to-image';
 import { Upload, Type, Sparkles, Video, Save, ChevronLeft, Wand2, MousePointer2, Plus, Edit2, X, Zap, Coins, MessageSquare, Volume2, User, Film } from 'lucide-react';
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery, useAction } from "convex/react";
 import { useUser } from "@clerk/clerk-react";
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { motion } from 'motion/react';
 
-import { UploadNode } from './UploadNode';
-import { ImaginationNode } from './ImaginationNode';
-import { OutputNode } from './OutputNode';
-import { TextNode } from './TextNode';
-import { VideoNode } from './VideoNode';
-import { EnhancerNode } from './EnhancerNode';
-import { GeminigenTextNode } from './GeminigenTextNode';
-import { GeminigenTTSNode } from './GeminigenTTSNode';
-import { ModelNode } from './ModelNode';
-import { ExtractFrameNode } from './ExtractFrameNode';
-import { FaceSwapNode } from './FaceSwapNode';
-import { MediaGallery } from './MediaGallery';
-import DeletableEdge from './DeletableEdge';
+import { UploadNode } from '../nodes/UploadNode';
+import { ImaginationNode } from '../nodes/ImaginationNode';
+import { OutputNode } from '../nodes/OutputNode';
+import { TextNode } from '../nodes/TextNode';
+import { VideoNode } from '../nodes/VideoNode';
+import { EnhancerNode } from '../nodes/EnhancerNode';
+import { GeminigenTextNode } from '../nodes/GeminigenTextNode';
+import { GeminigenTTSNode } from '../nodes/GeminigenTTSNode';
+import { ModelNode } from '../nodes/ModelNode';
+import { ExtractFrameNode } from '../nodes/ExtractFrameNode';
+import { FaceSwapNode } from '../nodes/FaceSwapNode';
+import { MediaGallery } from '../components/MediaGallery';
+import { FlowNavbar } from '../components/FlowNavbar';
+import { WorkspaceChatPanel } from '../components/WorkspaceChatPanel';
+import DeletableEdge from '../nodes/DeletableEdge';
 import { AppNode, AppNodeData, NodeType } from '../types';
-import { generateGeminigenImage, generateGeminigenVideo, generateGeminigenText, generateGeminigenTTS, generateAIModel, generateFaceSwap } from '../services/geminigenService';
-import { downloadAndUploadToConvex } from '../services/storageService';
+import { generateGeminigenImage, generateGeminigenVideo, generateGeminigenText, generateGeminigenTTS, generateAIModel, generateFaceSwap, unifiedGenerate } from '../services/geminigenService';
+import { clientFetchAndUploadToR2, uploadWorkflowToR2, uploadWorkflowPreviewToR2 } from '../services/storageService';
+import { api } from "../../convex/_generated/api";
 import { cn } from '../lib/utils';
 import { VIDEO_MODELS, TTS_MODELS, IMAGE_MODELS } from '../constants';
+import { PROMPT_ENGINEER_SYSTEM } from '../constants/promptEngineerPrompt';
 
 // Memoized outside component to prevent React Flow warning about new object instances
 const nodeTypes = {
@@ -69,16 +73,15 @@ export function Flow() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const { user } = useUser();
-  const dbUser = (useQuery as any)("users:currentUser", user ? { clerkId: user.id } : "skip") as any;
-  const project = (useQuery as any)("projects:get", { projectId: projectId as any }) as any;
-  const updateProject = (useMutation as any)("projects:updateProject");
-  const updatePreview = (useMutation as any)("projects:updatePreview");
-  const generateUploadUrl = (useMutation as any)("projects:generateUploadUrl");
-  const deductCredits = (useMutation as any)("credits:deduct");
-  const saveVideo = (useMutation as any)("projects:saveVideo");
-  const saveImage = (useMutation as any)("projects:saveImage");
-  const uploadFile = (useMutation as any)("projects:uploadFile");
-  const saveAiModel = (useMutation as any)("projects:saveAiModel");
+  const dbUser = useQuery(api.users.currentUser, user ? { clerkId: user.id } : "skip") as any;
+  const project = useQuery(api.projects.get, projectId ? { projectId: projectId as any } : "skip") as any;
+  const updateProject = useMutation(api.projects.updateProject);
+  const updatePreview = useMutation(api.projects.updatePreview);
+  const deleteStorageFile = useMutation(api.projects.deleteStorageFile);
+  const saveGeneration = useMutation(api.generations.save);
+  const saveImage = useMutation(api.projects.saveImage);
+  const saveVideo = useMutation(api.projects.saveVideo);
+  const useChatCreditsMutation = useMutation(api.users.useChatCredits);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -87,37 +90,78 @@ export function Flow() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number, y: number } | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const reactFlowInstance = useReactFlow();
 
-  // Load project data
+  // Load project data (nodes/edges via proxy to avoid R2 CORS; or inline fallback)
   useEffect(() => {
-    if (project) {
-      const loadData = async () => {
-        try {
-          let nodesData = project.nodes;
-          let edgesData = project.edges;
+    if (!project) return;
+    const loadData = async () => {
+      try {
+        let nodesArray: unknown[] | null = null;
+        let edgesArray: unknown[] | null = null;
+        const isFullUrl = (u: string) => typeof u === "string" && u.startsWith("http") && u.includes("/");
+        const fetchOpts: RequestInit = { cache: "no-store" }; // avoid 304 with empty body
+        const fetchUrl = (url: string) =>
+          url.includes("r2.dev") || url.includes("r2.cloudflarestorage")
+            ? fetch(`/api/proxy-workflow?url=${encodeURIComponent(url)}`, fetchOpts)
+            : fetch(url, fetchOpts);
 
-          if (project.nodesUrl) {
-            const res = await fetch(project.nodesUrl);
-            nodesData = await res.text();
+        const parseJsonArray = (text: string): unknown[] | null => {
+          const trimmed = text?.trim();
+          if (!trimmed) return null;
+          try {
+            const parsed = JSON.parse(trimmed) as unknown;
+            return Array.isArray(parsed) ? parsed : null;
+          } catch {
+            return null;
           }
-          if (project.edgesUrl) {
-            const res = await fetch(project.edgesUrl);
-            edgesData = await res.text();
-          }
+        };
 
-          if (nodesData) setNodes(JSON.parse(nodesData));
-          if (edgesData) setEdges(JSON.parse(edgesData));
-          setIsLoading(false);
-          // Reset unsaved changes after initial load
-          setTimeout(() => setHasUnsavedChanges(false), 100);
-        } catch (e) {
-          console.error("Failed to parse project data", e);
-          setIsLoading(false);
+        if (project.nodesUrl && isFullUrl(project.nodesUrl)) {
+          try {
+            const res = await fetchUrl(project.nodesUrl);
+            if (res.ok) {
+              const text = await res.text();
+              const parsed = parseJsonArray(text);
+              if (parsed) nodesArray = parsed;
+            }
+          } catch (_) {}
         }
-      };
-      loadData();
-    }
+        if (!nodesArray && project.nodes) {
+          const parsed = parseJsonArray(project.nodes);
+          if (parsed) nodesArray = parsed;
+        }
+
+        if (project.edgesUrl && isFullUrl(project.edgesUrl)) {
+          try {
+            const res = await fetchUrl(project.edgesUrl);
+            if (res.ok) {
+              const text = await res.text();
+              const parsed = parseJsonArray(text);
+              if (parsed) edgesArray = parsed;
+            }
+          } catch (_) {}
+        }
+        if (!edgesArray && project.edges) {
+          const parsed = parseJsonArray(project.edges);
+          if (parsed) edgesArray = parsed;
+        }
+
+        if (nodesArray) setNodes(nodesArray as any);
+        else setNodes([]);
+        if (edgesArray) setEdges(edgesArray as any);
+        else setEdges([]);
+        setIsLoading(false);
+        setTimeout(() => setHasUnsavedChanges(false), 100);
+      } catch (e) {
+        console.error("Failed to load project data", e);
+        setIsLoading(false);
+        setNodes([]);
+        setEdges([]);
+      }
+    };
+    loadData();
   }, [project, setNodes, setEdges]);
 
   // Track unsaved changes
@@ -142,90 +186,78 @@ export function Flow() {
     const nodesStr = JSON.stringify(flow.nodes);
     const edgesStr = JSON.stringify(flow.edges);
 
-    const STORAGE_THRESHOLD = 800 * 1024; // 800KB threshold for storage
-
-    let nodesStorageId = project.nodesStorageId;
-    let edgesStorageId = project.edgesStorageId;
-
-    const uploadToStorage = async (data: string) => {
-      const uploadUrl = await generateUploadUrl();
-      const result = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: data,
-      });
-      const { storageId } = await result.json();
-      return storageId;
-    };
-
     try {
       const updatePayload: any = { projectId: project._id };
 
-      // Collect and save all generated images and videos from output nodes
+      // Collect and save all generated images and videos from output nodes (avoid duplicates)
       const generatedMedia = { images: 0, videos: 0 };
-      const savePromises: Promise<any>[] = [];
+      const savedNodeIds: string[] = [];
 
-      flow.nodes.forEach((node: any) => {
-        if (node.type === 'output' && node.data?.value && !node.data?.isSaved) {
-          const val = node.data.value;
-          const url = typeof val === 'string' ? val : (typeof val === 'object' && val?.url ? val.url : null);
+      for (const node of flow.nodes) {
+        if (node.type !== 'output' || !node.data?.value || node.data?.isSaved) continue;
+        const val = node.data.value;
+        const url = typeof val === 'string' ? val : (typeof val === 'object' && val?.url ? val.url : null);
+        if (!url || !url.startsWith('https://')) continue;
 
-          if (url && url.startsWith('https://')) {
-            if (url.includes('.mp4') || url.startsWith('data:video')) {
-              generatedMedia.videos++;
-              // Save video: download & upload then save
-              savePromises.push((async () => {
-                try {
-                  const uploaded = await downloadAndUploadToConvex(url, uploadFile, project._id);
-                  const storageUrl = uploaded?.url || url;
-                  const storageId = uploaded?.storageId || undefined;
-                  return await saveVideo({
-                    projectId,
-                    videoUrl: storageUrl,
-                    videoStorageId: storageId,
-                    nodeId: node.id,
-                    title: `Generated video - ${new Date().toLocaleString()}`,
-                    prompt: node.data.params?.prompt || '',
-                    model: node.data.params?.model || ''
-                  });
-                } catch (e) {
-                  console.warn('Failed to save video:', e);
-                }
-              })());
-            } else {
-              generatedMedia.images++;
-              // Save image: download & upload then save
-              savePromises.push((async () => {
-                try {
-                  const uploaded = await downloadAndUploadToConvex(url, uploadFile, project._id);
-                  const storageUrl = uploaded?.url || url;
-                  const storageId = uploaded?.storageId || undefined;
-                  return await saveImage({
-                    projectId,
-                    imageUrl: storageUrl,
-                    imageStorageId: storageId,
-                    nodeId: node.id,
-                    title: `Generated image - ${new Date().toLocaleString()}`,
-                    prompt: node.data.params?.prompt || '',
-                    model: node.data.params?.model || ''
-                  });
-                } catch (e) {
-                  console.warn('Failed to save image:', e);
-                }
-              })());
-            }
+        let storageUrl = url;
+        let storageId: string | undefined;
+        const isAlreadyStored = url.includes('r2.dev') || url.includes('r2.cloudflarestorage');
+        if (!isAlreadyStored) {
+          try {
+            const uploaded = await clientFetchAndUploadToR2(url);
+            storageUrl = uploaded.url;
+            storageId = uploaded.storageId;
+          } catch (e) {
+            console.warn('Failed to upload media for node:', node.id, e);
+            continue;
           }
         }
-      });
 
-      // Await all save operations (fire in parallel)
-      await Promise.all(savePromises);
+        try {
+          if (url.includes('.mp4') || url.startsWith('data:video')) {
+            generatedMedia.videos++;
+            await saveVideo({
+              projectId: project._id,
+              videoUrl: storageUrl,
+              videoStorageId: storageId || undefined,
+              nodeId: node.id,
+              title: `Generated video - ${new Date().toLocaleString()}`,
+              prompt: node.data.params?.prompt || '',
+              model: node.data.params?.model || ''
+            });
+          } else {
+            generatedMedia.images++;
+            await saveImage({
+              projectId: project._id,
+              imageUrl: storageUrl,
+              imageStorageId: storageId || undefined,
+              nodeId: node.id,
+              title: `Generated image - ${new Date().toLocaleString()}`,
+              prompt: node.data.params?.prompt || '',
+              model: node.data.params?.model || ''
+            });
+          }
+          savedNodeIds.push(node.id);
+        } catch (e) {
+          console.warn('Failed to save to DB for node:', node.id, e);
+        }
+      }
 
-      // Take a screenshot for preview
+      // Mark saved nodes in state to prevent duplicate saves on next save
+      if (savedNodeIds.length > 0) {
+        setNodes((nds) =>
+          nds.map((n) =>
+            savedNodeIds.includes(n.id)
+              ? { ...n, data: { ...n.data, isSaved: true } }
+              : n
+          )
+        );
+      }
+
+      // Preview: upload to R2 with fixed key (overwrites old preview, no duplicate storage)
       try {
         const nodesBounds = getNodesBounds(flow.nodes);
         const viewport = getViewportForBounds(nodesBounds, 1200, 630, 0.5, 2.0, 0.1);
-
         const captureElement = document.querySelector('.react-flow__viewport') as HTMLElement;
         if (captureElement) {
           try {
@@ -237,34 +269,32 @@ export function Flow() {
                 transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
               },
             });
-
-            const storageId = await uploadToStorage(dataUrl);
-            await updatePreview({ projectId: project._id, storageId });
+            const blob = await (await fetch(dataUrl)).blob();
+            const previewUrl = await uploadWorkflowPreviewToR2(project._id, blob);
+            await updatePreview({ projectId: project._id, storageId: previewUrl });
           } catch (captureErr) {
-            // Gracefully handle CORS/tainted canvas errors from external images
             console.warn('Could not capture preview (external images present):', captureErr);
-            // Continue saving without updating preview
           }
         }
       } catch (previewErr) {
         console.warn('Preview capture failed:', previewErr);
       }
 
-      if (nodesStr.length > STORAGE_THRESHOLD) {
-        nodesStorageId = await uploadToStorage(nodesStr);
-        updatePayload.nodesStorageId = nodesStorageId;
-        updatePayload.nodes = ""; // Clear direct field
-      } else {
-        updatePayload.nodes = nodesStr;
-      }
+      const finalNodes = flow.nodes.map((n) =>
+        savedNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isSaved: true } } : n
+      );
+      const finalNodesStr = JSON.stringify(finalNodes);
 
-      if (edgesStr.length > STORAGE_THRESHOLD) {
-        edgesStorageId = await uploadToStorage(edgesStr);
-        updatePayload.edgesStorageId = edgesStorageId;
-        updatePayload.edges = ""; // Clear direct field
-      } else {
-        updatePayload.edges = edgesStr;
-      }
+      // 1. Upload new workflow to R2 (fixed key per project = overwrites previous, no duplicate)
+      const { nodesUrl, edgesUrl } = await uploadWorkflowToR2(
+        project._id,
+        finalNodesStr,
+        edgesStr
+      );
+      updatePayload.nodesStorageId = nodesUrl;
+      updatePayload.edgesStorageId = edgesUrl;
+      updatePayload.nodes = "";
+      updatePayload.edges = "";
 
       await updateProject(updatePayload);
       setHasUnsavedChanges(false);
@@ -282,7 +312,7 @@ export function Flow() {
     } finally {
       setIsSaving(false);
     }
-  }, [project, reactFlowInstance, updateProject, updatePreview, generateUploadUrl, saveImage, saveVideo]);
+  }, [project, reactFlowInstance, updateProject, updatePreview, saveImage, saveVideo, setNodes]);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -444,7 +474,9 @@ export function Flow() {
       cost = 50;
     } else if (node.type === 'imagination') {
       const imageModel = IMAGE_MODELS.find(m => m.id === model);
-      cost = imageModel ? imageModel.cost : 5;
+      const costPerImage = imageModel ? imageModel.cost : 5;
+      const quantity = Math.min(4, Math.max(1, Number(node.data.params?.quantity) || 1));
+      cost = costPerImage * quantity;
     } else if (node.type === 'faceSwap') {
       cost = 25; // Face swap premium feature
     } else if (node.type === 'extractFrame') {
@@ -462,11 +494,19 @@ export function Flow() {
 
     onUpdateNode(nodeId, { isGenerating: true });
 
-    const outputNodeId = `output-${Date.now()}`;
-    const newOutputNode: AppNode = {
-      id: outputNodeId,
-      type: 'output',
-      position: { x: node.position.x + 400, y: node.position.y },
+    const outputCount = node.type === 'imagination'
+      ? Math.min(4, Math.max(1, Number(node.data.params?.quantity) || 1))
+      : 1;
+    const costPerCall = outputCount > 1 ? cost / outputCount : cost;
+    const ts = Date.now();
+    const outputNodeIds: string[] = Array.from({ length: outputCount }, (_, i) =>
+      outputCount === 1 ? `output-${ts}` : `output-${ts}-${i}`
+    );
+
+    const newOutputNodes: AppNode[] = outputNodeIds.map((id, i) => ({
+      id,
+      type: 'output' as const,
+      position: { x: node.position.x + 400 + i * 140, y: node.position.y },
       data: {
         label: 'Output',
         type: 'output',
@@ -475,26 +515,33 @@ export function Flow() {
         onDelete: onDeleteNode,
         onUpdate: onUpdateNode,
       },
-    };
+    }));
 
-    setNodes((nds) => [...nds, newOutputNode]);
-    setEdges((eds) => addEdge({
-      id: `e-${nodeId}-${outputNodeId}`,
-      source: nodeId,
-      target: outputNodeId,
-      type: 'deletable',
-      style: { stroke: EDGE_COLORS[0], strokeWidth: 2 }
-    }, eds));
+    setNodes((nds) => [...nds, ...newOutputNodes]);
+    setEdges((eds) => {
+      let next = eds;
+      for (const outId of outputNodeIds) {
+        next = addEdge({
+          id: `e-${nodeId}-${outId}`,
+          source: nodeId,
+          target: outId,
+          type: 'deletable',
+          style: { stroke: EDGE_COLORS[0], strokeWidth: 2 }
+        }, next);
+      }
+      return next;
+    });
 
     try {
-      let resultUrl: string | { url: string; downloadUrl?: string } = '';
+      let type: "image" | "video" | "text" | "audio" = "image";
+      let params: any = {};
 
       if (node.type === 'video') {
+        type = "video";
         const videoRefs = [...referenceImages];
         if (firstFrame) videoRefs.unshift(firstFrame);
         if (lastFrame) videoRefs.push(lastFrame);
-
-        resultUrl = await generateGeminigenVideo({
+        params = {
           prompt: finalPrompt,
           model: node.data.params?.model || 'veo-3.1-fast',
           aspect_ratio: node.data.params?.aspect_ratio,
@@ -503,33 +550,42 @@ export function Flow() {
           mode: node.data.params?.mode,
           ref_images: videoRefs,
           ref_history: refHistory
-        });
+        };
       } else if (node.type === 'enhancer') {
-        const enhanced = await generateGeminigenText({
+        type = "text";
+        params = {
           prompt: `Enhance this prompt for AI generation: ${extraPrompt || node.data.params?.prompt || ''}`,
           model: 'gemini-2.5-pro',
-        });
-        onUpdateNode(outputNodeId, { value: enhanced, isGenerating: false });
-        onUpdateNode(nodeId, { isGenerating: false });
-        await deductCredits({ userId: dbUser._id, amount: 5 });
-        return;
+        };
       } else if (node.type === 'geminigenText') {
-        resultUrl = await generateGeminigenText({
+        type = "text";
+        params = {
           prompt: finalPrompt,
           model: node.data.params?.model || 'gemini-2.5-pro',
           system_instruction: node.data.params?.systemInstruction,
-        });
+        };
       } else if (node.type === 'geminigenTTS') {
-        resultUrl = await generateGeminigenTTS({
+        type = "audio";
+        params = {
           text: finalPrompt,
           model: node.data.params?.model || 'tts-1',
           voice: node.data.params?.voiceId || 'OA001',
-        });
+        };
+      } else if (node.type === 'faceSwap') {
+        if (referenceImages.length < 2) {
+          throw new Error("Face swap requires two images: a reference face and a target body");
+        }
+        type = "image";
+        params = {
+          prompt: `Realistic face swap between ${referenceImages[0]} and ${referenceImages[1]}. ${node.data.params?.prompt || ''}`,
+          model: "nano-banana-pro",
+          file_urls: [referenceImages[0], referenceImages[1]]
+        };
       } else if (node.type === 'aiModel') {
-        // AI Model uses the same API as imagination node but with custom prompt
+        type = "image";
         const fileUrls = [...referenceImages];
         if (node.data.params?.baseImageUrl) fileUrls.push(node.data.params.baseImageUrl);
-        resultUrl = await generateGeminigenImage({
+        params = {
           prompt: finalPrompt,
           model: model || 'nano-banana-pro',
           aspect_ratio: node.data.params?.aspectRatio,
@@ -537,25 +593,10 @@ export function Flow() {
           resolution: node.data.params?.resolution,
           output_format: node.data.params?.outputFormat,
           file_urls: fileUrls
-        });
-      } else if (node.type === 'faceSwap') {
-        // For face swap: referenceImages[0] is face, referenceImages[1] is body
-        if (referenceImages.length < 2) {
-          throw new Error("Face swap requires two images: a reference face and a target body");
-        }
-        resultUrl = await generateFaceSwap(
-          referenceImages[0],
-          referenceImages[1],
-          node.data.params?.prompt || ''
-        );
-      } else if (node.type === 'extractFrame') {
-        // Extract Frame doesn't need to create an output node - it updates itself
-        onDeleteNode(outputNodeId);
-        toast.info("Frame extraction complete");
-        onUpdateNode(nodeId, { isGenerating: false });
-        return;
+        };
       } else {
-        resultUrl = await generateGeminigenImage({
+        type = "image";
+        params = {
           prompt: finalPrompt,
           model: model || 'nano-banana-pro',
           aspect_ratio: node.data.params?.aspectRatio,
@@ -563,67 +604,52 @@ export function Flow() {
           resolution: node.data.params?.resolution,
           output_format: node.data.params?.outputFormat,
           file_urls: referenceImages
+        };
+      }
+
+      if (outputCount === 1) {
+        const { url: finalUrl, storageId } = await unifiedGenerate({
+          userId: dbUser._id,
+          type,
+          params,
+          cost: costPerCall,
+          onStore: saveGeneration,
         });
+        onUpdateNode(outputNodeIds[0], { value: finalUrl, isGenerating: false, isSaved: true, storageId, mediaType: type });
+        toast.success("Generation Complete & Saved!");
+      } else {
+        const results = await Promise.all(
+          Array.from({ length: outputCount }, () =>
+            unifiedGenerate({
+              userId: dbUser._id,
+              type,
+              params,
+              cost: costPerCall,
+              onStore: saveGeneration,
+            })
+          )
+        );
+        results.forEach((result, i) => {
+          onUpdateNode(outputNodeIds[i], {
+            value: result.url,
+            isGenerating: false,
+            isSaved: true,
+            storageId: result.storageId,
+            mediaType: type,
+          });
+        });
+        toast.success(`${outputCount} images generated & saved!`);
       }
-
-      onUpdateNode(outputNodeId, { value: resultUrl, isGenerating: false });
-
-      // Save to Convex based on node type (download authenticated asset, upload to Convex storage)
-      try {
-        const url = typeof resultUrl === 'object' && resultUrl?.url ? resultUrl.url :
-          typeof resultUrl === 'string' ? resultUrl : null;
-
-        if (url && url.startsWith('https://')) {
-          // Download and re-upload to Convex storage so we own a persistent copy
-          const uploaded = await downloadAndUploadToConvex(url, uploadFile, projectId as string);
-          const storageUrl = uploaded?.url || url;
-          const storageId = uploaded?.storageId || null;
-
-          if (node.type === 'video') {
-            // Save video with storage id when available
-            const savedId = await saveVideo({
-              projectId,
-              videoUrl: storageUrl,
-              videoStorageId: storageId || undefined,
-              nodeId: outputNodeId,
-              title: `Generated video - ${new Date().toLocaleString()}`,
-              prompt: finalPrompt,
-              model: node.data.params?.model
-            });
-            onUpdateNode(outputNodeId, { isSaved: true, savedId });
-            toast.success("Video saved to Convex database!");
-          } else if (node.type === 'imagination' || node.type === 'aiModel' || node.type === 'faceSwap') {
-            // Save image with storage id when available
-            const savedId = await saveImage({
-              projectId,
-              imageUrl: storageUrl,
-              imageStorageId: storageId || undefined,
-              nodeId: outputNodeId,
-              title: `Generated image - ${new Date().toLocaleString()}`,
-              prompt: finalPrompt,
-              model
-            });
-            onUpdateNode(outputNodeId, { isSaved: true, savedId });
-            toast.success("Image saved to Convex database!");
-          }
-        }
-      } catch (e) {
-        console.warn('Failed to save output to Convex:', e);
-        // Don't fail the generation if saving fails
-      }
-
-      await deductCredits({ userId: dbUser._id, amount: cost });
-      toast.success("Generation Complete!");
     } catch (error: any) {
       console.error('Generation failed:', error);
-      onDeleteNode(outputNodeId);
+      outputNodeIds.forEach((id) => onDeleteNode(id));
       toast.error("Generation Failed", {
         description: error.message || "Something went wrong. Please try again."
       });
     } finally {
       onUpdateNode(nodeId, { isGenerating: false });
     }
-  }, [nodes, edges, dbUser, onDeleteNode, onUpdateNode, setNodes, setEdges, deductCredits, projectId, saveVideo, saveImage]);
+  }, [nodes, edges, dbUser, onDeleteNode, onUpdateNode, setNodes, setEdges, saveGeneration]);
 
   const addNode = useCallback((type: NodeType, x?: number, y?: number) => {
     const id = `${type}-${Date.now()}`;
@@ -654,6 +680,107 @@ export function Flow() {
     setHasUnsavedChanges(true);
     setMenu(null);
   }, [onDeleteNode, onUpdateNode, handleGenerate, reactFlowInstance, setNodes]);
+
+  const workspaceSystemPrompt = useMemo(() => {
+    const nodeList = nodes
+      .filter((n) => n.type !== "output")
+      .map((n) => {
+        const d = n.data as AppNodeData;
+        const prompt = d.params?.prompt ? ` prompt: "${String(d.params.prompt).slice(0, 80)}..."` : "";
+        return `- ${n.type} (id: ${n.id})${prompt}`;
+      })
+      .join("\n");
+    const edgeList = edges.map((e) => `  ${e.source} -> ${e.target}`).join("\n");
+    return `${PROMPT_ENGINEER_SYSTEM}
+
+WORKSPACE CONTEXT (for node suggestions and copy-paste prompts):
+Current workspace:
+Nodes:
+${nodeList || "(none)"}
+Edges:
+${edgeList || "(none)"}
+
+When the user asks to add a node (e.g. "I want the model to wear this dress"), reply with your enhanced prompt in friendly text, then add exactly one JSON line at the end with no other text on that line:
+- suggestedAction: "add_node"
+- nodeType: one of upload, imagination, text, video, enhancer
+- prompt: your full detailed prompt (for imagination) or empty for upload
+- connectToNodeId: node id to connect FROM if relevant
+
+Example: {"suggestedAction":"add_node","nodeType":"imagination","prompt":"Ultra-realistic photograph of a model wearing a red dress, standing in a studio, soft key lighting, 85mm lens, shallow depth of field, 4K photorealistic","connectToNodeId":"upload-123"}
+
+When the user only wants to enhance a prompt (no new node), output the enhanced prompt in a clear block they can copy. Do not add the JSON line in that case.`;
+  }, [nodes, edges]);
+
+  const selectedNodeSummary = useMemo(() => {
+    if (!selectedNodeId) return null;
+    const node = nodes.find((n) => n.id === selectedNodeId);
+    if (!node) return null;
+    const d = node.data as AppNodeData;
+    const prompt = d.params?.prompt ? `Current prompt: ${String(d.params.prompt)}` : "No prompt set.";
+    return `Node id: ${node.id}, type: ${node.type}. ${prompt}`;
+  }, [selectedNodeId, nodes]);
+
+  const handleApproveSuggestion = useCallback(
+    (action: { suggestedAction: string; nodeType?: string; prompt?: string; connectToNodeId?: string }) => {
+      if (action.suggestedAction !== "add_node" || !action.nodeType) return;
+      const type = action.nodeType as NodeType;
+      const validTypes: NodeType[] = ["upload", "imagination", "output", "text", "video", "enhancer", "geminigenText", "geminigenTTS", "aiModel", "extractFrame", "faceSwap"];
+      if (!validTypes.includes(type)) return;
+
+      const sourceId = action.connectToNodeId && nodes.some((n) => n.id === action.connectToNodeId) ? action.connectToNodeId : null;
+      let position = { x: 400, y: 200 };
+      if (sourceId) {
+        const source = nodes.find((n) => n.id === sourceId);
+        if (source) position = { x: source.position.x + 320, y: source.position.y };
+      }
+      const newId = `${type}-${Date.now()}`;
+      const newNode: AppNode = {
+        id: newId,
+        type,
+        position,
+        data: {
+          label: type.charAt(0).toUpperCase() + type.slice(1),
+          type,
+          params: action.prompt ? { prompt: action.prompt } : undefined,
+          onDelete: onDeleteNode,
+          onUpdate: onUpdateNode,
+          onGenerate: handleGenerate,
+          onPreview: (url: string) => setPreviewImage(url),
+        },
+      };
+      setNodes((nds) => [...nds, newNode]);
+      if (sourceId) {
+        setEdges((eds) =>
+          addEdge(
+            {
+              id: `e-${sourceId}-${newId}`,
+              source: sourceId,
+              target: newId,
+              type: "deletable",
+              style: { stroke: EDGE_COLORS[0], strokeWidth: 2 },
+            },
+            eds
+          )
+        );
+      }
+      setHasUnsavedChanges(true);
+      toast.success(`Added ${type} node${action.prompt ? " with suggested prompt" : ""}`);
+    },
+    [nodes, onDeleteNode, onUpdateNode, handleGenerate, setNodes, setEdges]
+  );
+
+  const handleApplyPromptToNode = useCallback(
+    (nodeId: string, prompt: string) => {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+      onUpdateNode(nodeId, {
+        params: { ...(node.data?.params || {}), prompt },
+      });
+      setHasUnsavedChanges(true);
+      toast.success("Prompt applied to node");
+    },
+    [nodes, onUpdateNode]
+  );
 
   const onContextMenu = useCallback(
     (event: React.MouseEvent) => {
@@ -691,6 +818,15 @@ export function Flow() {
           </div>
         </div>
       )}
+      {isSaving && (
+        <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-md flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4 px-6 py-8 rounded-2xl bg-zinc-900/90 border border-zinc-700 shadow-2xl">
+            <div className="w-10 h-10 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+            <p className="text-white font-semibold">Saving your workflow</p>
+            <p className="text-zinc-400 text-sm">Syncing to cloud...</p>
+          </div>
+        </div>
+      )}
       <ReactFlow
         nodes={nodesWithCallbacks}
         edges={edges}
@@ -698,6 +834,10 @@ export function Flow() {
         onEdgesChange={onEdgesChangeWithTracking}
         onConnect={onConnect}
         onPaneClick={onPaneClick}
+        onSelectionChange={({ nodes: selected }) => {
+          const id = selected.length === 1 ? selected[0].id : null;
+          setSelectedNodeId(id);
+        }}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
@@ -705,94 +845,31 @@ export function Flow() {
         <Background color="#52525b" gap={40} size={2} variant="dots" />
         <Controls />
 
-        <Panel position="top-left" className="!m-0 w-full">
-          <div className="flex items-center justify-between bg-zinc-900/95 backdrop-blur-2xl border-b border-zinc-800/50 px-6 py-3 shadow-2xl">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => navigate('/dashboard')}
-                className="p-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-zinc-400 hover:text-white transition-all group"
-                title="Back to Dashboard"
-              >
-                <ChevronLeft size={18} className="group-hover:-translate-x-0.5 transition-transform" />
-              </button>
-
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-950/50 rounded-xl border border-zinc-800/50">
-                <div className={`w-1.5 h-1.5 rounded-full ${hasUnsavedChanges ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`} />
-                <span className="text-[10px] text-zinc-400 font-black uppercase tracking-widest">
-                  {hasUnsavedChanges ? 'Unsaved Changes' : 'All Changes Saved'}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1 bg-zinc-950/50 p-1 rounded-xl border border-zinc-800/50">
-                <div className="flex items-center gap-0.5">
-                  <button onClick={() => addNode('upload')} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-emerald-400 transition-all flex flex-col items-center gap-1 group cursor-pointer min-w-[50px]">
-                    <Upload size={14} />
-                    <span className="text-[8px] font-black uppercase tracking-tight">Upload</span>
-                  </button>
-                  <button onClick={() => addNode('text')} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-blue-400 transition-all flex flex-col items-center gap-1 group cursor-pointer min-w-[50px]">
-                    <Type size={14} />
-                    <span className="text-[8px] font-black uppercase tracking-tight">Text</span>
-                  </button>
-                </div>
-
-                <div className="w-px h-6 bg-zinc-800 mx-1" />
-
-                <div className="flex items-center gap-0.5">
-                  <button onClick={() => addNode('imagination')} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-emerald-400 transition-all flex flex-col items-center gap-1 group cursor-pointer min-w-[50px]">
-                    <Sparkles size={14} />
-                    <span className="text-[8px] font-black uppercase tracking-tight">Imagine</span>
-                  </button>
-                  <button onClick={() => addNode('video')} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-purple-400 transition-all flex flex-col items-center gap-1 group cursor-pointer min-w-[50px]">
-                    <Video size={14} />
-                    <span className="text-[8px] font-black uppercase tracking-tight">Video</span>
-                  </button>
-                  <button onClick={() => addNode('enhancer')} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-amber-400 transition-all flex flex-col items-center gap-1 group cursor-pointer min-w-[50px]">
-                    <Wand2 size={14} />
-                    <span className="text-[8px] font-black uppercase tracking-tight">Enhance</span>
-                  </button>
-                  <button onClick={() => addNode('aiModel')} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-emerald-400 transition-all flex flex-col items-center gap-1 group cursor-pointer min-w-[50px]">
-                    <User size={14} />
-                    <span className="text-[8px] font-black uppercase tracking-tight">Model</span>
-                  </button>
-                </div>
-
-                <div className="w-px h-6 bg-zinc-800 mx-1" />
-
-                <button
-                  onClick={saveWorkflow}
-                  disabled={isSaving || !hasUnsavedChanges}
-                  className={cn(
-                    "p-2 rounded-lg transition-all flex flex-col items-center gap-1 px-3 group cursor-pointer min-w-[50px]",
-                    hasUnsavedChanges
-                      ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 shadow-lg shadow-emerald-500/30"
-                      : "bg-emerald-600/10 text-emerald-500 hover:bg-emerald-600/20 opacity-50 cursor-not-allowed"
-                  )}
-                  title={hasUnsavedChanges ? "Save all changes and media to database" : "No unsaved changes"}
-                >
-                  {isSaving ? (
-                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <Save size={14} />
-                  )}
-                  <span className="text-[8px] font-black uppercase tracking-tight">{isSaving ? 'Saving...' : 'Save'}</span>
-                </button>
-              </div>
-
-              {dbUser && (
-                <div className="px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-2">
-                  <Coins size={14} className="text-amber-500" />
-                  <div className="flex flex-col">
-                    <span className="text-xs font-black text-amber-500 leading-none">{dbUser.credits}</span>
-                    <span className="text-[7px] text-amber-500/60 font-bold uppercase tracking-widest">Credits</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </Panel>
+        <FlowNavbar
+          hasUnsavedChanges={hasUnsavedChanges}
+          isSaving={isSaving}
+          onSave={saveWorkflow}
+          onAddNode={(type) => addNode(type as NodeType)}
+          dbUser={dbUser}
+        />
       </ReactFlow>
+
+      <WorkspaceChatPanel
+        systemPrompt={workspaceSystemPrompt}
+        selectedNodeSummary={selectedNodeSummary}
+        selectedNodeId={selectedNodeId}
+        onApproveSuggestion={handleApproveSuggestion}
+        onApplyPromptToNode={handleApplyPromptToNode}
+        dbUser={dbUser}
+        useChatCredits={useChatCreditsMutation}
+        onCreditsUsed={(freeUsed, creditsUsed, freeRemaining) => {
+          if (freeUsed) {
+            toast.info(`Free message (${freeRemaining} free left)`);
+          } else if (creditsUsed > 0) {
+            toast.info(`${creditsUsed} credit${creditsUsed === 1 ? "" : "s"} used for this response`);
+          }
+        }}
+      />
 
       {previewImage && (
         <div

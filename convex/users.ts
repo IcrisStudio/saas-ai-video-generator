@@ -57,7 +57,8 @@ export const storeUser = mutation({
       credits: initialCredits,
       plan: args.plan || 'free',
       planKey: args.planKey,
-      lastCreditAwardedAt: subDate || now
+      lastCreditAwardedAt: subDate || now,
+      freeChatMessagesUsed: 0,
     });
     return { userId, awarded: initialCredits };
   },
@@ -122,5 +123,38 @@ export const currentUser = query({
       .query("users")
       .withIndex("by_clerkId", (q) => q.eq("clerkId", args.clerkId))
       .unique();
+  },
+});
+
+const FREE_CHAT_MESSAGES = 20;
+const CHAT_CREDITS_PER_500_CHARS = 1;
+
+/** Deduct or use free tier for workspace AI chat. Returns creditsUsed and freeRemaining. */
+export const useChatCredits = mutation({
+  args: {
+    userId: v.id("users"),
+    responseLength: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) throw new Error("User not found");
+    const freeUsed = (user.freeChatMessagesUsed ?? 0) < FREE_CHAT_MESSAGES;
+    if (freeUsed) {
+      const used = (user.freeChatMessagesUsed ?? 0) + 1;
+      await ctx.db.patch(args.userId, { freeChatMessagesUsed: used });
+      return {
+        freeUsed: true,
+        creditsUsed: 0,
+        freeRemaining: Math.max(0, FREE_CHAT_MESSAGES - used),
+      };
+    }
+    const creditsToDeduct = Math.max(1, Math.ceil(args.responseLength / 500)) * CHAT_CREDITS_PER_500_CHARS;
+    if (user.credits < creditsToDeduct) throw new Error("Insufficient credits for chat. Use free messages or add credits.");
+    await ctx.db.patch(args.userId, { credits: user.credits - creditsToDeduct });
+    return {
+      freeUsed: false,
+      creditsUsed: creditsToDeduct,
+      freeRemaining: 0,
+    };
   },
 });

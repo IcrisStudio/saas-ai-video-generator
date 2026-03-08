@@ -1,13 +1,11 @@
+import "./server/loadEnv";
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import dotenv from "dotenv";
 import fetch from "node-fetch";
 import multer from "multer";
 import FormData from "form-data";
-
-// Load .env first, then .env.local so local overrides take effect
-dotenv.config();
-dotenv.config({ path: '.env.local', override: true });
+import { uploadToR2, isR2Configured } from "./server/r2Upload";
+import { groqChat } from "./server/groq";
 
 const upload = multer();
 
@@ -165,6 +163,257 @@ async function startServer() {
       res.status(response.status).json(data);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Proxy for R2 workflow JSON (avoids CORS: browser fetches same-origin, server fetches R2)
+  app.get("/api/proxy-workflow", async (req, res) => {
+    const url = req.query.url as string;
+    if (!url || typeof url !== "string" || !url.startsWith("http")) {
+      return res.status(400).json({ error: "Invalid url" });
+    }
+    const r2Public = process.env.R2_PUBLIC_URL?.replace(/\/$/, "");
+    if (!r2Public || !url.startsWith(r2Public + "/")) {
+      return res.status(400).json({ error: "URL must be from R2 bucket" });
+    }
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: "application/json, text/plain, */*" },
+      });
+      if (!response.ok) {
+        return res.status(response.status).send(response.statusText);
+      }
+      const contentType = response.headers.get("content-type") || "application/json";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Cache-Control", "no-store, no-cache");
+      const text = await response.text();
+      res.send(text);
+    } catch (e: any) {
+      console.error("[Proxy workflow]", e);
+      res.status(500).json({ error: e.message || "Proxy failed" });
+    }
+  });
+
+  // Proxy for media URLs - API CDN often returns 403 when fetched from Convex server
+  app.get("/api/proxy-media", async (req, res) => {
+    const url = req.query.url as string;
+    if (!url || !url.startsWith("http")) return res.status(400).json({ error: "Invalid url" });
+    try {
+      const apiKey = process.env.GEMINIGEN_API_KEY;
+      const headers: Record<string, string> = {
+        Accept: "image/*,video/*,audio/*,*/*",
+        "User-Agent": "LyvrixMediaProxy/1.0",
+      };
+      if (apiKey && url.includes("geminigen")) headers["x-api-key"] = apiKey;
+      const response = await fetch(url, { headers });
+      if (!response.ok) {
+        return res.status(response.status).send(response.statusText);
+      }
+      const ct = response.headers.get("content-type") || "application/octet-stream";
+      res.setHeader("Content-Type", ct);
+      const buffer = await response.arrayBuffer();
+      res.send(Buffer.from(buffer));
+    } catch (e: any) {
+      console.error("[Proxy media]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- Cloudflare R2 upload endpoints (replaces Convex file storage for media) ---
+  app.post("/api/upload-r2", express.raw({ type: "*/*", limit: "100mb" }), async (req, res) => {
+    if (!isR2Configured()) {
+      return res.status(503).json({ error: "R2 storage is not configured. Set R2_* env vars." });
+    }
+    try {
+      const body = req.body as Buffer;
+      if (!body || body.length === 0) {
+        return res.status(400).json({ error: "No file body" });
+      }
+      const contentType = (req.headers["content-type"] as string) || "application/octet-stream";
+      const ext = contentType.split("/")[1]?.split(";")[0] || "bin";
+      const prefix = ext === "json" ? "data" : "media";
+      const { url } = await uploadToR2(body, { contentType, keyPrefix: prefix, extension: ext });
+      return res.json({ url });
+    } catch (e: any) {
+      console.error("[R2 upload]", e);
+      return res.status(500).json({ error: e.message || "Upload failed" });
+    }
+  });
+
+  // Multipart variant for form uploads (e.g. <input type="file">)
+  app.post("/api/upload-r2/multipart", upload.single("file"), async (req, res) => {
+    if (!isR2Configured()) {
+      return res.status(503).json({ error: "R2 storage is not configured. Set R2_* env vars." });
+    }
+    try {
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file?.buffer) {
+        return res.status(400).json({ error: "No file in request (use field name 'file')" });
+      }
+      const ext = file.mimetype?.split("/")[1] || file.originalname?.split(".").pop() || "bin";
+      const { url } = await uploadToR2(file.buffer, {
+        contentType: file.mimetype || "application/octet-stream",
+        keyPrefix: "media",
+        extension: ext,
+      });
+      return res.json({ url });
+    } catch (e: any) {
+      console.error("[R2 upload multipart]", e);
+      return res.status(500).json({ error: e.message || "Upload failed" });
+    }
+  });
+
+  app.post("/api/ingest-url", express.json(), async (req, res) => {
+    if (!isR2Configured()) {
+      return res.status(503).json({ error: "R2 storage is not configured. Set R2_* env vars." });
+    }
+    try {
+      const { url, downloadUrl } = req.body || {};
+      const urlToFetch = downloadUrl || url;
+      if (!urlToFetch || typeof urlToFetch !== "string" || !urlToFetch.startsWith("http")) {
+        return res.status(400).json({ error: "Missing or invalid url (or downloadUrl)" });
+      }
+      const apiKey = process.env.GEMINIGEN_API_KEY;
+      const headers: Record<string, string> = {
+        Accept: "image/*,video/*,audio/*,*/*",
+        "User-Agent": "LyvrixMediaProxy/1.0",
+      };
+      if (apiKey && urlToFetch.includes("geminigen")) headers["x-api-key"] = apiKey;
+      const response = await fetch(urlToFetch, { headers });
+      if (!response.ok) {
+        return res.status(response.status).json({
+          error: `Failed to fetch: ${response.statusText} (${response.status})`,
+        });
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const contentType = response.headers.get("content-type") || "application/octet-stream";
+      const ext = contentType.split("/")[1]?.split(";")[0] || "bin";
+      const { url: r2Url } = await uploadToR2(buffer, {
+        contentType,
+        keyPrefix: "media",
+        extension: ext,
+      });
+      return res.json({ url: r2Url });
+    } catch (e: any) {
+      console.error("[R2 ingest-url]", e);
+      return res.status(500).json({ error: e.message || "Ingest failed" });
+    }
+  });
+
+  app.post("/api/ingest-text", express.json(), async (req, res) => {
+    if (!isR2Configured()) {
+      return res.status(503).json({ error: "R2 storage is not configured. Set R2_* env vars." });
+    }
+    try {
+      const { text } = req.body || {};
+      if (typeof text !== "string") {
+        return res.status(400).json({ error: "Missing or invalid text" });
+      }
+      const buffer = Buffer.from(text, "utf-8");
+      const { url } = await uploadToR2(buffer, {
+        contentType: "text/plain",
+        keyPrefix: "text",
+        extension: "txt",
+      });
+      return res.json({ url });
+    } catch (e: any) {
+      console.error("[R2 ingest-text]", e);
+      return res.status(500).json({ error: e.message || "Ingest failed" });
+    }
+  });
+
+  // Workflow/nodes JSON: store in R2 with fixed key per project (overwrites = no duplicate entries)
+  app.post("/api/workflow-save", express.json({ limit: "10mb" }), async (req, res) => {
+    if (!isR2Configured()) {
+      return res.status(503).json({ error: "R2 storage is not configured. Set R2_* env vars." });
+    }
+    try {
+      const { projectId, nodes, edges } = req.body || {};
+      if (!projectId || typeof projectId !== "string" || projectId.trim().length === 0) {
+        return res.status(400).json({ error: "Missing or invalid projectId" });
+      }
+      const safeId = projectId.replace(/[^a-zA-Z0-9_-]/g, "_") || "project";
+      const nodesKey = `workflows/${safeId}/nodes.json`;
+      const edgesKey = `workflows/${safeId}/edges.json`;
+
+      let nodesUrl: string | null = null;
+      let edgesUrl: string | null = null;
+
+      if (nodes !== undefined && nodes !== null) {
+        const buf =
+          typeof nodes === "string" ? Buffer.from(nodes, "utf-8") : Buffer.from(JSON.stringify(nodes), "utf-8");
+        const { url } = await uploadToR2(buf, {
+          key: nodesKey,
+          contentType: "application/json",
+        });
+        nodesUrl = url;
+      }
+      if (edges !== undefined && edges !== null) {
+        const buf =
+          typeof edges === "string" ? Buffer.from(edges, "utf-8") : Buffer.from(JSON.stringify(edges), "utf-8");
+        const { url } = await uploadToR2(buf, {
+          key: edgesKey,
+          contentType: "application/json",
+        });
+        edgesUrl = url;
+      }
+
+      if (!nodesUrl || !edgesUrl || !nodesUrl.includes("/") || !edgesUrl.includes("/")) {
+        return res.status(500).json({ error: "Workflow save failed: invalid URL from R2" });
+      }
+      return res.json({ nodesUrl, edgesUrl });
+    } catch (e: any) {
+      console.error("[R2 workflow-save]", e);
+      return res.status(500).json({ error: e.message || "Workflow save failed" });
+    }
+  });
+
+  // Preview image: fixed key per project (overwrites old preview = no duplicate storage)
+  app.post("/api/workflow-preview", express.raw({ type: "image/*", limit: "5mb" }), async (req, res) => {
+    if (!isR2Configured()) {
+      return res.status(503).json({ error: "R2 storage is not configured." });
+    }
+    try {
+      const projectId = (req.headers["x-project-id"] as string)?.trim();
+      if (!projectId) return res.status(400).json({ error: "Missing x-project-id header" });
+      const safeId = projectId.replace(/[^a-zA-Z0-9_-]/g, "_") || "project";
+      const key = `workflows/${safeId}/preview.jpg`;
+      const body = req.body as Buffer;
+      if (!body || body.length === 0) return res.status(400).json({ error: "No image body" });
+      const { url } = await uploadToR2(body, { key, contentType: "image/jpeg" });
+      if (!url || !url.includes("/")) return res.status(500).json({ error: "Invalid preview URL" });
+      return res.json({ previewUrl: url });
+    } catch (e: any) {
+      console.error("[R2 workflow-preview]", e);
+      return res.status(500).json({ error: e.message || "Preview upload failed" });
+    }
+  });
+
+  // Groq chat proxy (keeps API key server-side)
+  app.post("/api/groq/chat", express.json(), async (req, res) => {
+    try {
+      const { messages, systemPrompt, model, maxTokens } = req.body || {};
+      if (!Array.isArray(messages) || messages.length === 0) {
+        return res.status(400).json({ error: "messages array required" });
+      }
+      const fullMessages: { role: "system" | "user" | "assistant"; content: string }[] = [];
+      if (systemPrompt && typeof systemPrompt === "string") {
+        fullMessages.push({ role: "system", content: systemPrompt });
+      }
+      for (const m of messages) {
+        if (m?.role && m?.content) {
+          fullMessages.push({
+            role: m.role as "system" | "user" | "assistant",
+            content: String(m.content),
+          });
+        }
+      }
+      const content = await groqChat(fullMessages, { model, maxTokens });
+      return res.json({ content });
+    } catch (e: any) {
+      console.error("[Groq chat]", e);
+      return res.status(500).json({ error: e.message || "Groq chat failed" });
     }
   });
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Wand2, Download, RefreshCw, Trash2 } from 'lucide-react';
+import { Wand2, Download, RefreshCw, Trash2, Save } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 interface ModelControlSectionProps {
@@ -7,6 +7,7 @@ interface ModelControlSectionProps {
   onGenerate: () => void;
   onDelete: () => void;
   displayUrl: string | null;
+  onSaveModel?: () => void;
 }
 
 export const ModelControlSection: React.FC<ModelControlSectionProps> = ({
@@ -14,6 +15,7 @@ export const ModelControlSection: React.FC<ModelControlSectionProps> = ({
   onGenerate,
   onDelete,
   displayUrl,
+  onSaveModel,
 }) => {
   const handleDownload = () => {
     if (!displayUrl) return;
@@ -57,13 +59,24 @@ export const ModelControlSection: React.FC<ModelControlSectionProps> = ({
       </button>
 
       {displayUrl && (
-        <button
-          onClick={handleDownload}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg font-semibold text-xs uppercase tracking-wider bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/30 transition-all"
-        >
-          <Download size={14} />
-          Download
-        </button>
+        <>
+          <button
+            onClick={handleDownload}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg font-semibold text-xs uppercase tracking-wider bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/30 transition-all"
+          >
+            <Download size={14} />
+            Download
+          </button>
+          {onSaveModel && (
+            <button
+              onClick={onSaveModel}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg font-semibold text-xs uppercase tracking-wider bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 border border-purple-500/30 transition-all"
+            >
+              <Save size={14} />
+              Save model
+            </button>
+          )}
+        </>
       )}
 
       <button

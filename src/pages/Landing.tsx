@@ -4,6 +4,7 @@ import { Sparkles, ArrowRight, Play, CheckCircle2, X, Zap, Image as ImageIcon, V
 import { SignUpButton, useUser } from "@clerk/clerk-react";
 import { useNavigate } from 'react-router-dom';
 import workflowBanner from '../assets/images/landing-page-workflow-banner.png';
+import logo from '../assets/images/logo-without-bg.png';
 
 import video1 from '../assets/videos/video-1.mp4';
 import video2 from '../assets/videos/video-2.mp4';
@@ -55,7 +56,7 @@ function SoraIcon() {
 
 // ─── Animated Blob ─────────────────────────────────────────────────────────
 
-function AnimatedBlob({ className, delay = 0, duration = 20 }) {
+function AnimatedBlob({ className, delay = 0, duration = 20, style = {} }: { className: string, delay?: number, duration?: number, style?: any }) {
   return (
     <motion.div
       className={`absolute rounded-full blur-[80px] opacity-30 ${className}`}
@@ -237,10 +238,8 @@ export function Landing() {
       <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-8 py-5"
         style={{ background: "rgba(5,5,8,0.8)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
         <div className="flex items-center gap-2.5 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-          <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, #6EE7B7, #3B82F6)" }}>
-            <Sparkles size={16} className="text-white" fill="white" />
-          </div>
-          <span className="font-bold text-lg tracking-tight" style={{ color: "#ffffff" }}>NanoBanana Pro</span>
+          <img src={logo} alt="Lueminex" className="w-8 h-8 object-contain" />
+          <span className="font-bold text-lg tracking-tight" style={{ color: "#ffffff" }}>Lueminex</span>
         </div>
         <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-400">
           <button onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })} className="hover:text-white transition-colors">Features</button>
@@ -298,10 +297,10 @@ export function Landing() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6 }}
               className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide"
-              style={{ background: "rgba(99,102,241,0.1)", color: "#6366f1", border: "1px solid rgba(99,102,241,0.2)" }}
+              style={{ background: "rgba(139,92,246,0.1)", color: "#a78bfa", border: "1px solid rgba(139,92,246,0.2)" }}
             >
               <Sparkles size={12} />
-              AI Creative Studio for Everyone
+              AI Made Simple for Everyone
             </motion.div>
 
             <motion.h1
@@ -310,11 +309,11 @@ export function Landing() {
               transition={{ delay: 0.1, duration: 0.7 }}
               style={{ fontSize: "clamp(2.8rem, 6vw, 5rem)", fontWeight: 700, lineHeight: 1.08, letterSpacing: "-0.03em", color: "#ffffff" }}
             >
-              Create stunning<br />
-              <span style={{ background: "linear-gradient(135deg, #6366f1 0%, #a78bfa 40%, #34d399 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-                AI videos & images
+              Transform Your Imagination<br />
+              <span style={{ background: "linear-gradient(135deg, #a78bfa 0%, #6366f1 40%, #34d399 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+                Into Reality with AI
               </span><br />
-              in seconds.
+              Effortlessly.
             </motion.h1>
 
             <motion.p
@@ -324,8 +323,7 @@ export function Landing() {
               className="text-lg leading-relaxed max-w-md"
               style={{ color: "#9ca3af" }}
             >
-              One canvas. Every top AI model. No technical skills needed —
-              just your imagination and a single click.
+              No prompting skills needed. Create stunning videos, images, and more with AI at affordable prices. From ideas to reality in seconds.
             </motion.p>
 
             <motion.div
@@ -407,7 +405,7 @@ export function Landing() {
             </div>
 
             <h2 className="text-5xl md:text-7xl font-bold tracking-tight text-white mb-6" style={{ letterSpacing: "-0.03em" }}>
-              Meet <span className="text-transparent bg-clip-text" style={{ backgroundImage: "linear-gradient(135deg, #f9fafb 0%, #a78bfa 100%)" }}>NanoBanana Workflow</span>
+              Meet <span className="text-transparent bg-clip-text" style={{ backgroundImage: "linear-gradient(135deg, #f9fafb 0%, #a78bfa 100%)" }}>Lyvrix Workflow</span>
             </h2>
 
             <p className="text-xl md:text-2xl leading-relaxed text-gray-400 max-w-2xl mx-auto font-medium">
@@ -652,7 +650,7 @@ export function Landing() {
               <div>
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mb-4"
                   style={{ background: "rgba(139,92,246,0.15)", color: "#c4b5fd" }}>
-                  <Sparkles size={11} /> NanoBanana Pro
+                  <Sparkles size={11} /> Lyvrix Pro
                 </div>
                 <h3 className="text-2xl font-bold" style={{ color: "#ffffff" }}>All models. One place.</h3>
                 <p className="text-gray-400 mt-1">First 50 credits are absolutely free.</p>
@@ -742,14 +740,11 @@ export function Landing() {
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start gap-12">
           <div className="space-y-4">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl flex items-center justify-center"
-                style={{ background: "linear-gradient(135deg, #6EE7B7, #3B82F6)" }}>
-                <Sparkles size={16} className="text-white" fill="white" />
-              </div>
-              <span className="font-bold text-lg tracking-tight text-white">NanoBanana Pro</span>
+              <img src={logo} alt="Lueminex" className="w-8 h-8 object-contain" />
+              <span className="font-bold text-lg tracking-tight text-white">Lueminex</span>
             </div>
             <p className="text-gray-500 text-sm max-w-xs leading-relaxed">
-              Your creativity was always there. We just made it easy to let it out.
+              Transform your imagination into reality with AI. No prompting skills needed. Just creativity.
             </p>
           </div>
           <div className="flex gap-16 flex-wrap">
@@ -771,8 +766,8 @@ export function Landing() {
         </div>
         <div className="max-w-7xl mx-auto mt-12 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-gray-600"
           style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-          <p>© 2025 NanoBanana Pro. All rights reserved.</p>
-          <p>Made for every creator, everywhere 🌍</p>
+          <p>© 2025 Lueminex. All rights reserved. | lueminex.com</p>
+          <p>Made to bring imagination to creativity 🌍</p>
         </div>
       </footer>
     </div>

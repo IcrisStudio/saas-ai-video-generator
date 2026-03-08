@@ -137,7 +137,7 @@ export function Navbar() {
           <Sparkles className="text-white" size={22} />
         </div>
         <span className="text-2xl font-black tracking-tighter uppercase bg-gradient-to-r from-white via-white to-zinc-500 bg-clip-text text-transparent">
-          NanoBanana Pro
+          Lyvrix
         </span>
       </div>
 

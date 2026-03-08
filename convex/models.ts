@@ -69,3 +69,4 @@ export const deleteModel = mutation({
     await ctx.db.delete(args.modelId);
   },
 });
+

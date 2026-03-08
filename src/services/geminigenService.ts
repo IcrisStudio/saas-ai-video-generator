@@ -1,3 +1,4 @@
+import { clientFetchAndUploadToR2, ingestTextToR2 } from "./storageService";
 
 export interface GeminigenImageParams {
   prompt: string;
@@ -180,15 +181,113 @@ Do not copy the face or identity from Image 1.`;
 }
 
 /**
+ * Unified generation service that:
+ * 1. Calls the appropriate AI generation function
+ * 2. Uploads the result to Cloudflare R2 via the backend
+ * 3. Saves the generation to the history table and deducts credits atomically
+ */
+export async function unifiedGenerate({
+  userId,
+  type,
+  params,
+  cost,
+  onStore,
+}: {
+  userId: string;
+  type: "image" | "video" | "text" | "audio";
+  params: any;
+  cost: number;
+  onStore: (args: any) => Promise<any>;
+}): Promise<{ url: string; storageId?: string }> {
+  try {
+    let result: { url: string; downloadUrl?: string; uuid?: string };
+    if (type === "video") {
+      result = await generateGeminigenVideo(params);
+    } else if (type === "text") {
+      result = await generateGeminigenText(params);
+    } else if (type === "audio") {
+      result = await generateGeminigenTTS(params);
+    } else {
+      result = await generateGeminigenImage(params);
+    }
+
+    if (!result.url) throw new Error("No result returned from AI service");
+
+    let storedUrl: string;
+    let storageId: string | null = null;
+
+    const isHttpUrl = result.url.startsWith("http://") || result.url.startsWith("https://");
+
+    if (type === "text" && !isHttpUrl) {
+      const res = await ingestTextToR2(result.url);
+      storedUrl = res.url;
+      storageId = res.url;
+    } else if (isHttpUrl) {
+      const downloadArg = type === "image" ? undefined : result.downloadUrl;
+      const res = await clientFetchAndUploadToR2(result.url, downloadArg);
+      storedUrl = res.url;
+      storageId = res.storageId;
+    } else {
+      throw new Error("Cannot store result: no URL and no text storage available.");
+    }
+
+    // Sanitize metadata before sending to Convex mutation to avoid exceeding
+    // Convex 1MB argument size limit. Remove data URIs and very large strings.
+    const MAX_STRING_LEN = 10000; // conservative threshold
+
+    function sanitize(value: any): any {
+      if (value == null) return value;
+      if (typeof value === 'string') {
+        // Remove data URIs (base64 payloads) entirely
+        if (value.startsWith('data:')) return '[removed:data]';
+        // Truncate extremely long strings
+        if (value.length > MAX_STRING_LEN) return value.slice(0, 200) + '...[truncated]';
+        return value;
+      }
+      if (typeof value === 'number' || typeof value === 'boolean') return value;
+      if (Array.isArray(value)) return value.map(sanitize);
+      if (typeof value === 'object') {
+        const out: any = {};
+        for (const k of Object.keys(value)) {
+          // Drop common fields that may contain uploaded file blobs
+          if (k === 'file_urls' || k === 'ref_images' || k === 'files') continue;
+          out[k] = sanitize(value[k]);
+        }
+        return out;
+      }
+      return value;
+    }
+
+    const safeMetadata = sanitize(params);
+
+    await onStore({
+      userId,
+      type,
+      url: storedUrl,
+      storageId: storageId ?? undefined,
+      prompt: params.prompt || params.input_text,
+      model: params.model || params.model_name,
+      metadata: safeMetadata,
+      creditsToDeduct: cost,
+    });
+
+    return { url: storedUrl, storageId: storageId ?? undefined };
+  } catch (error) {
+    console.error("Unified generation failed:", error);
+    throw error;
+  }
+}
+
+/**
  * Extracts the final media URL from a completed history response.
  * Checks all possible result fields in priority order.
  */
 function extractResult(data: any): { url: string; downloadUrl?: string } {
-  // Image result
+  // Image result - prefer Cloudflare R2 signed URL, fallback to download URL
   if (data.generated_image?.[0]?.image_url) {
     return {
-      url: data.generated_image[0].image_url,
-      downloadUrl: data.generated_image[0].file_download_url
+      url: data.generated_image[0].image_url,  // Cloudflare R2 signed URL (primary - most reliable)
+      downloadUrl: data.generated_image[0].file_download_url  // Fallback only
     };
   }
   // Video result

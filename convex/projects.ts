@@ -1,8 +1,26 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
-export const generateUploadUrl = mutation(async (ctx) => {
-  return await ctx.storage.generateUploadUrl();
+/** Resolve URL: if value is already an R2/public URL (starts with http), return as-is; else legacy Convex storage ID. */
+async function resolveStorageUrl(ctx: { storage: { getUrl: (id: any) => Promise<string | null> } }, value: string | undefined): Promise<string | null> {
+  if (!value) return null;
+  if (value.startsWith("http://") || value.startsWith("https://")) return value;
+  return await ctx.storage.getUrl(value as any);
+}
+
+export const deleteStorageFile = mutation({
+  args: {
+    storageId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    if (!args.storageId) return;
+    if (args.storageId.startsWith("http://") || args.storageId.startsWith("https://")) return; // R2 URL, nothing to delete in Convex
+    try {
+      await ctx.storage.delete(args.storageId as any);
+    } catch (e) {
+      console.warn('Failed to delete storage file:', args.storageId, e);
+    }
+  },
 });
 
 export const uploadFile = mutation({
@@ -38,9 +56,9 @@ export const list = query({
     return await Promise.all(
       projects.map(async (p) => ({
         ...p,
-        nodesUrl: p.nodesStorageId ? await ctx.storage.getUrl(p.nodesStorageId) : null,
-        edgesUrl: p.edgesStorageId ? await ctx.storage.getUrl(p.edgesStorageId) : null,
-        previewUrl: p.previewStorageId ? await ctx.storage.getUrl(p.previewStorageId) : p.previewUrl,
+        nodesUrl: await resolveStorageUrl(ctx, p.nodesStorageId),
+        edgesUrl: await resolveStorageUrl(ctx, p.edgesStorageId),
+        previewUrl: (await resolveStorageUrl(ctx, p.previewStorageId)) ?? p.previewUrl ?? null,
       }))
     );
   },
@@ -53,9 +71,9 @@ export const get = query({
     if (!p) return null;
     return {
       ...p,
-      nodesUrl: p.nodesStorageId ? await ctx.storage.getUrl(p.nodesStorageId) : null,
-      edgesUrl: p.edgesStorageId ? await ctx.storage.getUrl(p.edgesStorageId) : null,
-      previewUrl: p.previewStorageId ? await ctx.storage.getUrl(p.previewStorageId) : p.previewUrl,
+      nodesUrl: await resolveStorageUrl(ctx, p.nodesStorageId),
+      edgesUrl: await resolveStorageUrl(ctx, p.edgesStorageId),
+      previewUrl: (await resolveStorageUrl(ctx, p.previewStorageId)) ?? p.previewUrl ?? null,
     };
   },
 });
@@ -128,6 +146,17 @@ export const saveVideo = mutation({
     const project = await ctx.db.get(args.projectId);
     if (!project) throw new Error("Project not found");
     
+    // Delete any existing video for this nodeId to avoid duplicates
+    const existingVideos = await ctx.db
+      .query("generatedVideos")
+      .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
+      .filter((q) => q.eq(q.field("nodeId"), args.nodeId))
+      .collect();
+    
+    for (const video of existingVideos) {
+      await ctx.db.delete(video._id);
+    }
+    
     return await ctx.db.insert("generatedVideos", {
       projectId: args.projectId,
       userId: project.userId,
@@ -155,6 +184,17 @@ export const saveImage = mutation({
   handler: async (ctx, args) => {
     const project = await ctx.db.get(args.projectId);
     if (!project) throw new Error("Project not found");
+    
+    // Delete any existing image for this nodeId to avoid duplicates
+    const existingImages = await ctx.db
+      .query("generatedImages")
+      .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
+      .filter((q) => q.eq(q.field("nodeId"), args.nodeId))
+      .collect();
+    
+    for (const image of existingImages) {
+      await ctx.db.delete(image._id);
+    }
     
     return await ctx.db.insert("generatedImages", {
       projectId: args.projectId,
@@ -221,10 +261,9 @@ export const listAiModels = query({
       .order("desc")
       .collect();
 
-    // Resolve storage URLs if present
     return await Promise.all(models.map(async (m) => ({
       ...m,
-      resolvedUrl: m.imageStorageId ? await ctx.storage.getUrl(m.imageStorageId) : m.imageUrl,
+      resolvedUrl: (await resolveStorageUrl(ctx, m.imageStorageId)) ?? m.imageUrl,
     })));
   },
 });
@@ -234,15 +273,15 @@ export const remove = mutation({
   args: { projectId: v.id("projects") },
   handler: async (ctx, args) => {
     const project = await ctx.db.get(args.projectId);
-    if (project?.previewStorageId) {
-      await ctx.storage.delete(project.previewStorageId);
-    }
-    if (project?.nodesStorageId) {
-      await ctx.storage.delete(project.nodesStorageId);
-    }
-    if (project?.edgesStorageId) {
-      await ctx.storage.delete(project.edgesStorageId);
-    }
+    const deleteIfConvex = async (id: string | undefined) => {
+      if (!id || id.startsWith("http")) return;
+      try {
+        await ctx.storage.delete(id as any);
+      } catch (_) {}
+    };
+    await deleteIfConvex(project?.previewStorageId);
+    await deleteIfConvex(project?.nodesStorageId);
+    await deleteIfConvex(project?.edgesStorageId);
     await ctx.db.delete(args.projectId);
   },
 });
@@ -256,10 +295,9 @@ export const updatePreview = mutation({
     const project = await ctx.db.get(args.projectId);
     if (!project) throw new Error("Project not found");
 
-    // Delete old preview if it exists to save space
-    if (project.previewStorageId) {
+    if (project.previewStorageId && !project.previewStorageId.startsWith("http")) {
       try {
-        await ctx.storage.delete(project.previewStorageId);
+        await ctx.storage.delete(project.previewStorageId as any);
       } catch (e) {
         console.error("Failed to delete old preview", e);
       }
@@ -271,3 +309,4 @@ export const updatePreview = mutation({
     });
   },
 });
+

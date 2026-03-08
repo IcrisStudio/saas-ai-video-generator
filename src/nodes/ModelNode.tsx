@@ -19,9 +19,9 @@ export const ModelNode: React.FC<ModelNodeProps> = ({
   }, [id, data]);
 
   return (
-    <div className="relative">
-      <div className="nodrag bg-zinc-950/80 border border-purple-500/20 rounded-xl overflow-hidden backdrop-blur-sm">
-        <div className="p-4 min-h-screen overflow-y-auto">
+    <div className="relative w-full max-w-4xl">
+      <div className="nodrag bg-zinc-950/80 border border-purple-500/20 rounded-xl overflow-hidden backdrop-blur-sm max-h-[85vh] overflow-y-auto">
+        <div className="p-4">
           <AIModelGenerator
             id={id}
             data={data}

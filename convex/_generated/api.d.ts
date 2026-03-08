@@ -8,8 +8,11 @@
  * @module
  */
 
+import type * as community from "../community.js";
 import type * as credits from "../credits.js";
+import type * as generations from "../generations.js";
 import type * as models from "../models.js";
+import type * as notifications from "../notifications.js";
 import type * as projects from "../projects.js";
 import type * as users from "../users.js";
 
@@ -20,8 +23,11 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  community: typeof community;
   credits: typeof credits;
+  generations: typeof generations;
   models: typeof models;
+  notifications: typeof notifications;
   projects: typeof projects;
   users: typeof users;
 }>;
