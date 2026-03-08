@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { uploadToR2, isR2Configured } from "../server/r2Upload";
+import { uploadToR2, isR2Configured } from "./lib/r2";
 
 export const config = {
   api: { bodyParser: false },
@@ -8,9 +8,14 @@ export const config = {
 function getRawBody(req: VercelRequest): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
+    const r = req as NodeJS.ReadableStream & { on?: (e: string, cb: (chunk: Buffer) => void) => void };
+    if (typeof r.on !== "function") {
+      reject(new Error("Request stream not readable"));
+      return;
+    }
+    r.on("data", (chunk: Buffer) => chunks.push(chunk));
+    r.on("end", () => resolve(Buffer.concat(chunks)));
+    r.on("error", reject);
   });
 }
 
@@ -30,7 +35,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: "Missing x-project-id header" });
     }
 
-    const body = await getRawBody(req);
+    let body: Buffer;
+    const rawBody = (req as unknown as { body?: Buffer }).body;
+    if (Buffer.isBuffer(rawBody)) {
+      body = rawBody;
+    } else {
+      body = await getRawBody(req);
+    }
     if (!body || body.length === 0) {
       return res.status(400).json({ error: "No image body" });
     }

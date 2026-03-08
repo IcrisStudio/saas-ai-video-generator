@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { uploadToR2, isR2Configured } from "../server/r2Upload";
+import { uploadToR2, isR2Configured } from "./lib/r2";
 
 export const config = {
   api: { bodyParser: { sizeLimit: "10mb" } },
