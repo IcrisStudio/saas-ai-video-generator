@@ -1,9 +1,5 @@
 {
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
-  ],
-  "functions": {
-    "api/workflow-save.ts": { "runtime": "nodejs20.x" },
-    "api/workflow-preview.ts": { "runtime": "nodejs20.x" }
-  }
+  ]
 }
