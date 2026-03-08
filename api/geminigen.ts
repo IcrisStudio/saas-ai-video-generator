@@ -37,6 +37,12 @@ function getTargetPath(target: string | undefined): string | null {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const send500 = (err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    try {
+      res.status(500).json({ error: msg });
+    } catch (_) {}
+  };
   try {
     const method = req.method || "";
     const targetHeader = (req.headers["x-geminigen-target"] as string)?.trim();
@@ -89,10 +95,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!targetPath || targetPath === "tts-text") {
       return res.status(400).json({ error: "Missing or invalid X-Geminigen-Target header (e.g. image, text, video-gen/veo)" });
     }
-    return proxyMultipartToGeminigen(req, res, targetPath);
+    const result = await proxyMultipartToGeminigen(req, res, targetPath);
+    if (result !== undefined) return result;
+    return res.status(500).json({ error: "Proxy did not respond" });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Internal error";
     console.error("[geminigen]", e);
-    return res.status(500).json({ error: message });
+    send500(e);
   }
 }
