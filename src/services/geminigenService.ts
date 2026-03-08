@@ -29,10 +29,19 @@ export interface GeminigenTextParams {
 }
 
 async function handleResponse(response: Response) {
-  const data = await response.json();
+  const text = await response.text();
+  let data: any;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    if (!response.ok) {
+      throw new Error("Server error – please try again. If it persists, check your connection and that the app is deployed with the correct API keys.");
+    }
+    throw new Error("Invalid response from server");
+  }
   if (!response.ok) {
-    const msg = (data as any).error_message || (data as any).message || "Geminigen API Error";
-    throw new Error(msg);
+    const msg = (data as any).error_message ?? (data as any).message ?? (data as any).error ?? "Geminigen API Error";
+    throw new Error(typeof msg === "string" ? msg : "Generation failed");
   }
   return data as any;
 }

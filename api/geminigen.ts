@@ -1,3 +1,10 @@
+/**
+ * Single Geminigen proxy route (image, video, text, tts, status).
+ * We use one route because Vercel Hobby allows only 12 serverless functions;
+ * adding R2 (workflow-save, workflow-preview, proxy-workflow) pushed us over,
+ * so all Geminigen traffic goes through this handler with X-Geminigen-Target header
+ * or __target query (for rewrites). The API itself is unchanged – we just forward.
+ */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { proxyMultipartToGeminigen } from "./lib/geminigenProxy";
 
@@ -56,7 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const uuid = uuidQuery || (req.headers["x-geminigen-uuid"] as string)?.trim();
       if (!uuid) return res.status(400).json({ error: "uuid required for status" });
       const apiKey = process.env.GEMINIGEN_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "GEMINIGEN_API_KEY not configured" });
+      if (!apiKey) return res.status(500).json({ error: "GEMINIGEN_API_KEY not set. Add it in Vercel → Settings → Environment Variables." });
       const response = await fetch(`${GEMINIGEN_BASE_URL}/history/${uuid}`, {
         method: "GET",
         headers: { "x-api-key": apiKey },
@@ -73,7 +80,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // POST with X-Geminigen-Target: tts — JSON body
     if (target === "tts") {
       const apiKey = process.env.GEMINIGEN_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "GEMINIGEN_API_KEY not configured" });
+      if (!apiKey) return res.status(500).json({ error: "GEMINIGEN_API_KEY not set. Add it in Vercel → Settings → Environment Variables." });
       const raw = await getRawBody(req);
       let body: object = {};
       try {

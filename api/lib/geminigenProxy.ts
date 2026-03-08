@@ -23,10 +23,10 @@ export async function proxyMultipartToGeminigen(
     } catch (_) {}
   };
   try {
-    const apiKey = process.env.GEMINIGEN_API_KEY;
-    if (!apiKey) {
-      return sendError(500, "GEMINIGEN_API_KEY not configured");
-    }
+  const apiKey = process.env.GEMINIGEN_API_KEY;
+  if (!apiKey) {
+    return sendError(500, "GEMINIGEN_API_KEY not set. Add it in Vercel → Project → Settings → Environment Variables.");
+  }
 
     const targetUrl = `${GEMINIGEN_BASE_URL}/${targetPath.replace(/^\//, "")}`;
     const form = new formidable.IncomingForm({ maxFileSize: 50 * 1024 * 1024 });
@@ -132,13 +132,19 @@ export async function proxyMultipartToGeminigen(
   }
 }
 
-function streamToBuffer(stream: FormData): Promise<Buffer> {
+function streamToBuffer(stream: FormData, timeoutMs = 25000): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     const pt = new PassThrough();
+    const done = (err?: Error, buf?: Buffer) => {
+      clearTimeout(t);
+      if (buf !== undefined) resolve(buf);
+      else reject(err ?? new Error("Stream failed"));
+    };
+    const t = setTimeout(() => done(new Error("Request body timeout")), timeoutMs);
     pt.on("data", (chunk: Buffer) => chunks.push(chunk));
-    pt.on("end", () => resolve(Buffer.concat(chunks)));
-    pt.on("error", reject);
+    pt.on("end", () => done(undefined, Buffer.concat(chunks)));
+    pt.on("error", (err) => done(err));
     stream.pipe(pt);
   });
 }
